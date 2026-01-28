@@ -1,0 +1,80 @@
+Bootstrap: docker
+From: rockylinux:9
+
+%labels
+    Author Ryan Dillon
+    Version v1.0
+    Description "Apptainer container for building SST"
+
+%environment
+    export PATH=/opt/python/bin:/opt/openmpi/bin:/opt/sst-core/bin:/opt/sst-elements/bin:$PATH
+    export LD_LIBRARY_PATH=/opt/openmpi/lib:/opt/python/lib:$LD_LIBRARY_PATH
+    export CPATH=/opt/openmpi/include:$CPATH
+    export MANPATH=/opt/openmpi/share/man:$MANPATH
+    export PYTHONPATH=/opt/python/lib/python3.12/site-packages:$PYTHONPATH
+    export CC=`which gcc`
+    export CXX=`which g++`
+    export MPICC=/opt/openmpi/bin/mpicc
+    export MPICXX=/opt/openmpi/bin/mpicxx
+
+%post
+    echo "UPDATING SYSTEM AND INSTALLING BUILD DEPENDENCIES"
+    dnf -y update
+    dnf -y groupinstall "Development Tools"
+    dnf -y install wget git tar bzip2-devel openssl-devel libffi-devel zlib-devel \
+        readline-devel sqlite-devel xz-devel tk-devel gdbm-devel db4-devel libuuid-devel ncurses-devel \
+        hwloc-devel libevent-devel numactl-devel pmix-devel libibverbs-devel \
+        make which curl file sudo cmake
+
+    mkdir -p /opt/src
+    cd /opt/src
+
+    echo "BUILDING PYTHON 3.12.3 FROM SOURCE"
+    wget https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz
+    tar -xzf Python-3.12.3.tgz
+    cd Python-3.12.3
+    ./configure --prefix=/opt/python --enable-optimizations --with-ensurepip=install
+    make -j8
+    make install
+    cd ..
+
+    echo "BUILDING OPENMPI"
+    wget https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-5.0.5.tar.gz
+    tar -xzf openmpi-5.0.5.tar.gz
+    cd openmpi-5.0.5
+    ./configure --prefix=/opt/openmpi --with-slurm --with-pmix
+    make -j$(nproc)
+    make install
+    cd ..
+
+    echo "BUILDING SST-CORE"
+    git clone https://github.com/sstsimulator/sst-core.git
+    cd sst-core
+    ./autogen.sh || true
+    ./configure --prefix=/opt/sst-core CC=`which gcc` CXX=`which g++` MPICC=/opt/openmpi/bin/mpicc MPICXX=/opt/openmpi/bin/mpicxx
+    make -j8
+    make install
+    cd ..
+
+    echo "BUILDING SST-ELEMENTS"
+    git clone https://github.com/sstsimulator/sst-elements.git
+    cd sst-elements
+    ./autogen.sh || true
+    ./configure --prefix=/opt/sst-elements --with-sst-core=/opt/sst-core
+    make -j8
+    make install
+    cd ..
+
+    echo "CLEANUP"
+    rm -rf /opt/src/*
+    dnf clean all
+
+    echo "BUILD COMPLETE"
+
+%test
+    echo "TESTING PYTHON"
+    python3 --version
+    echo "TESTING OPENMPI"
+    mpirun --version
+    echo "TESTING SST"
+    sst --version
